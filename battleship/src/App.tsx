@@ -270,11 +270,9 @@ function Board({
               const key = `${ri},${ci}`
               const isPreview = previewCells?.has(key) ?? false
               const canClick =
-                !isPlayerBoard &&
-                onCellClick &&
-                cell !== 'hit' &&
-                cell !== 'miss' &&
-                cell !== 'sunk'
+                onCellClick != null &&
+                (isPlayerBoard ||
+                  (cell !== 'hit' && cell !== 'miss' && cell !== 'sunk'))
 
               return (
                 <Cell
