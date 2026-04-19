@@ -130,14 +130,38 @@ function randomlyPlaceShips(): {
   return { board, ships }
 }
 
-// Computer AI: proper hunt/target mode
+// Computer AI: aggressive hunt/target mode
 function computerMove(
   board: CellState[][],
   lastHits: [number, number][]
 ): [number, number] {
-  // If we have hits, try to determine ship orientation and target systematically
+  // If we have hits, prioritize targeting adjacent cells to the most recent hit
   if (lastHits.length > 0) {
-    // Group hits by potential ship lines (horizontal/vertical)
+    // Get the most recent hit (last in array)
+    const mostRecentHit = lastHits[lastHits.length - 1]
+    const [recentR, recentC] = mostRecentHit
+    
+    // First, try adjacent cells to the most recent hit (most aggressive)
+    const directions: [number, number][] = [
+      [-1, 0], [1, 0], [0, -1], [0, 1] // up, down, left, right
+    ]
+    
+    // Shuffle directions for some randomness but prioritize
+    const shuffledDirections = directions.sort(() => Math.random() - 0.5)
+    
+    for (const [dr, dc] of shuffledDirections) {
+      const nr = recentR + dr
+      const nc = recentC + dc
+      if (
+        nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE &&
+        board[nr][nc] !== 'hit' && board[nr][nc] !== 'miss' && board[nr][nc] !== 'sunk'
+      ) {
+        console.log(`AI targeting adjacent to recent hit: ${ROW_LABELS[nr]}${COL_LABELS[nc]}`)
+        return [nr, nc]
+      }
+    }
+    
+    // If no adjacent cells available, try to determine ship orientation
     const hits = lastHits.map(([r, c]) => ({ r, c }))
     
     // Check if hits form a line (same row or same column)
@@ -156,10 +180,12 @@ function computerMove(
         
         // Try to extend left
         if (minCol > 0 && board[row][minCol - 1] !== 'hit' && board[row][minCol - 1] !== 'miss' && board[row][minCol - 1] !== 'sunk') {
+          console.log(`AI extending ship left: ${ROW_LABELS[row]}${COL_LABELS[minCol - 1]}`)
           return [row, minCol - 1]
         }
         // Try to extend right
         if (maxCol < BOARD_SIZE - 1 && board[row][maxCol + 1] !== 'hit' && board[row][maxCol + 1] !== 'miss' && board[row][maxCol + 1] !== 'sunk') {
+          console.log(`AI extending ship right: ${ROW_LABELS[row]}${COL_LABELS[maxCol + 1]}`)
           return [row, maxCol + 1]
         }
       } else {
@@ -169,10 +195,12 @@ function computerMove(
         
         // Try to extend up
         if (minRow > 0 && board[minRow - 1][col] !== 'hit' && board[minRow - 1][col] !== 'miss' && board[minRow - 1][col] !== 'sunk') {
+          console.log(`AI extending ship up: ${ROW_LABELS[minRow - 1]}${COL_LABELS[col]}`)
           return [minRow - 1, col]
         }
         // Try to extend down
         if (maxRow < BOARD_SIZE - 1 && board[maxRow + 1][col] !== 'hit' && board[maxRow + 1][col] !== 'miss' && board[maxRow + 1][col] !== 'sunk') {
+          console.log(`AI extending ship down: ${ROW_LABELS[maxRow + 1]}${COL_LABELS[col]}`)
           return [maxRow + 1, col]
         }
       }
@@ -189,6 +217,7 @@ function computerMove(
             nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE &&
             board[nr][nc] !== 'hit' && board[nr][nc] !== 'miss' && board[nr][nc] !== 'sunk'
           ) {
+            console.log(`AI targeting adjacent to hit: ${ROW_LABELS[nr]}${COL_LABELS[nc]}`)
             return [nr, nc]
           }
         }
@@ -210,7 +239,9 @@ function computerMove(
       }
     }
   }
-  return available[Math.floor(Math.random() * available.length)]
+  const target = available[Math.floor(Math.random() * available.length)]
+  console.log(`AI hunting randomly: ${ROW_LABELS[target[0]]}${COL_LABELS[target[1]]}`)
+  return target
 }
 
 function checkShipSunk(
