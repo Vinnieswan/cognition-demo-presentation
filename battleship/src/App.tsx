@@ -52,7 +52,7 @@ function canPlaceShip(
   for (let i = 0; i < size; i++) {
     const r = orientation === 'vertical' ? row + i : row
     const c = orientation === 'horizontal' ? col + i : col
-    if (r >= BOARD_SIZE || c >= BOARD_SIZE) return false
+    if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) return false
     if (board[r][c] !== 'empty') return false
   }
   return true
@@ -93,7 +93,9 @@ function randomlyPlaceShips(): {
 
   for (const shipDef of SHIPS) {
     let placed = false
-    while (!placed) {
+    let attempts = 0
+    while (!placed && attempts < 1000) {
+      attempts++
       const orientation: Orientation =
         Math.random() < 0.5 ? 'horizontal' : 'vertical'
       const row = Math.floor(Math.random() * BOARD_SIZE)
@@ -108,6 +110,21 @@ function randomlyPlaceShips(): {
         placed = true
       }
     }
+    if (!placed) {
+      console.error(`Failed to place ${shipDef.name} after 1000 attempts`)
+    }
+  }
+
+  // Debug: Check for overlaps
+  const allCells = ships.flatMap(ship => ship.cells)
+  const cellCounts = new Map<string, number>()
+  for (const [r, c] of allCells) {
+    const key = `${r},${c}`
+    cellCounts.set(key, (cellCounts.get(key) || 0) + 1)
+  }
+  const overlaps = Array.from(cellCounts.entries()).filter(([_, count]) => count > 1)
+  if (overlaps.length > 0) {
+    console.error('Ship overlaps detected:', overlaps)
   }
 
   return { board, ships }
@@ -509,53 +526,64 @@ function App() {
       timeoutRef.current = setTimeout(() => {
         setPlayerBoard(currentBoard => {
           const newPlayerBoard = currentBoard.map((r) => [...r])
-          const [cr, cc] = computerMove(newPlayerBoard, computerHits)
+          
+          setComputerHits(currentHits => {
+            const [cr, cc] = computerMove(newPlayerBoard, currentHits)
+            console.log(`Computer targeting ${ROW_LABELS[cr]}${COL_LABELS[cc]}, current hits:`, currentHits.map(([r, c]) => `${ROW_LABELS[r]}${COL_LABELS[c]}`))
 
-          if (newPlayerBoard[cr][cc] === 'ship') {
-            newPlayerBoard[cr][cc] = 'hit'
-            const newComputerHits: [number, number][] = [...computerHits, [cr, cc]]
+            if (newPlayerBoard[cr][cc] === 'ship') {
+              newPlayerBoard[cr][cc] = 'hit'
+              const newComputerHits: [number, number][] = [...currentHits, [cr, cc]]
 
-            let sunkMsg = ''
-            const newPlayerShips = playerShips.map((s) => ({ ...s }))
-            for (const ship of newPlayerShips) {
-              if (!ship.sunk && checkShipSunk(ship, newPlayerBoard)) {
-                ship.sunk = true
-                const updatedBoard = markShipSunk(newPlayerBoard, ship)
-                newPlayerBoard.splice(0, newPlayerBoard.length, ...updatedBoard)
-                // Remove sunk ship's cells from targeting
-                const sunkCells = new Set(ship.cells.map(([r, c]) => `${r},${c}`))
-                const filtered = newComputerHits.filter(
-                  ([r, c]) => !sunkCells.has(`${r},${c}`)
-                )
-                newComputerHits.length = 0
-                newComputerHits.push(...filtered)
-                sunkMsg = ` Computer sunk your ${ship.name}!`
-              }
+              let sunkMsg = ''
+              setPlayerShips(currentShips => {
+                const newPlayerShips = currentShips.map((s) => ({ ...s }))
+                for (const ship of newPlayerShips) {
+                  if (!ship.sunk && checkShipSunk(ship, newPlayerBoard)) {
+                    ship.sunk = true
+                    const updatedBoard = markShipSunk(newPlayerBoard, ship)
+                    newPlayerBoard.splice(0, newPlayerBoard.length, ...updatedBoard)
+                    // Remove sunk ship's cells from targeting
+                    const sunkCells = new Set(ship.cells.map(([r, c]) => `${r},${c}`))
+                    const filtered = newComputerHits.filter(
+                      ([r, c]) => !sunkCells.has(`${r},${c}`)
+                    )
+                    newComputerHits.length = 0
+                    newComputerHits.push(...filtered)
+                    sunkMsg = ` Computer sunk your ${ship.name}!`
+                    console.log(`Ship sunk: ${ship.name}, remaining hits:`, newComputerHits.map(([r, c]) => `${ROW_LABELS[r]}${COL_LABELS[c]}`))
+                  }
+                }
+                return newPlayerShips
+              })
+
+              setMessage(
+                `Computer hit ${ROW_LABELS[cr]}${COL_LABELS[cc]}!${sunkMsg} Your turn.`
+              )
+
+              // Check computer win
+              setPlayerShips(currentShips => {
+                if (currentShips.every((s) => s.sunk)) {
+                  setPhase('gameover')
+                  setWinner('computer')
+                  setMessage('Game over! The computer destroyed all your ships.')
+                }
+                return currentShips
+              })
+
+              setPlayerTurn(true)
+              return newComputerHits
+            } else {
+              newPlayerBoard[cr][cc] = 'miss'
+              setMessage(
+                `Computer missed ${ROW_LABELS[cr]}${COL_LABELS[cc]}. Your turn!`
+              )
+              setPlayerTurn(true)
+              return currentHits
             }
-
-            setPlayerShips(newPlayerShips)
-            setComputerHits(newComputerHits)
-            setMessage(
-              `Computer hit ${ROW_LABELS[cr]}${COL_LABELS[cc]}!${sunkMsg} Your turn.`
-            )
-
-            // Check computer win
-            if (newPlayerShips.every((s) => s.sunk)) {
-              setPhase('gameover')
-              setWinner('computer')
-              setMessage('Game over! The computer destroyed all your ships.')
-            }
-
-            setPlayerTurn(true)
-            return newPlayerBoard
-          } else {
-            newPlayerBoard[cr][cc] = 'miss'
-            setMessage(
-              `Computer missed ${ROW_LABELS[cr]}${COL_LABELS[cc]}. Your turn!`
-            )
-            setPlayerTurn(true)
-            return newPlayerBoard
-          }
+          })
+          
+          return newPlayerBoard
         })
       }, 800)
     },
