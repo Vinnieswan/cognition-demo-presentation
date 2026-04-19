@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { RotateCcw, Anchor, Crosshair, Ship, ChevronRight, RotateCw } from 'lucide-react'
 import './App.css'
 
@@ -113,42 +113,83 @@ function randomlyPlaceShips(): {
   return { board, ships }
 }
 
-// Computer AI: hunt/target mode
+// Computer AI: proper hunt/target mode
 function computerMove(
   board: CellState[][],
   lastHits: [number, number][]
 ): [number, number] {
-  // If we have recent hits that haven't sunk a ship, target adjacent cells
+  // If we have hits, try to determine ship orientation and target systematically
   if (lastHits.length > 0) {
-    const directions: [number, number][] = [
-      [-1, 0],
-      [1, 0],
-      [0, -1],
-      [0, 1],
-    ]
-    for (const [hr, hc] of lastHits) {
-      for (const [dr, dc] of directions) {
-        const nr = hr + dr
-        const nc = hc + dc
-        if (
-          nr >= 0 &&
-          nr < BOARD_SIZE &&
-          nc >= 0 &&
-          nc < BOARD_SIZE &&
-          (board[nr][nc] === 'empty' || board[nr][nc] === 'ship')
-        ) {
-          return [nr, nc]
+    // Group hits by potential ship lines (horizontal/vertical)
+    const hits = lastHits.map(([r, c]) => ({ r, c }))
+    
+    // Check if hits form a line (same row or same column)
+    const sameRow = hits.every(h => h.r === hits[0].r)
+    const sameCol = hits.every(h => h.c === hits[0].c)
+    
+    if (sameRow || sameCol) {
+      // We've determined orientation, target along the line
+      const row = hits[0].r
+      const col = hits[0].c
+      
+      if (sameRow) {
+        // Target horizontally along the same row
+        const minCol = Math.min(...hits.map(h => h.c))
+        const maxCol = Math.max(...hits.map(h => h.c))
+        
+        // Try to extend left
+        if (minCol > 0 && board[row][minCol - 1] !== 'hit' && board[row][minCol - 1] !== 'miss' && board[row][minCol - 1] !== 'sunk') {
+          return [row, minCol - 1]
+        }
+        // Try to extend right
+        if (maxCol < BOARD_SIZE - 1 && board[row][maxCol + 1] !== 'hit' && board[row][maxCol + 1] !== 'miss' && board[row][maxCol + 1] !== 'sunk') {
+          return [row, maxCol + 1]
+        }
+      } else {
+        // Target vertically along the same column
+        const minRow = Math.min(...hits.map(h => h.r))
+        const maxRow = Math.max(...hits.map(h => h.r))
+        
+        // Try to extend up
+        if (minRow > 0 && board[minRow - 1][col] !== 'hit' && board[minRow - 1][col] !== 'miss' && board[minRow - 1][col] !== 'sunk') {
+          return [minRow - 1, col]
+        }
+        // Try to extend down
+        if (maxRow < BOARD_SIZE - 1 && board[maxRow + 1][col] !== 'hit' && board[maxRow + 1][col] !== 'miss' && board[maxRow + 1][col] !== 'sunk') {
+          return [maxRow + 1, col]
+        }
+      }
+    } else {
+      // Hits are not aligned, target adjacent cells to any hit
+      for (const hit of hits) {
+        const directions: [number, number][] = [
+          [-1, 0], [1, 0], [0, -1], [0, 1]
+        ]
+        for (const [dr, dc] of directions) {
+          const nr = hit.r + dr
+          const nc = hit.c + dc
+          if (
+            nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE &&
+            board[nr][nc] !== 'hit' && board[nr][nc] !== 'miss' && board[nr][nc] !== 'sunk'
+          ) {
+            return [nr, nc]
+          }
         }
       }
     }
   }
 
-  // Random hunt
+  // Random hunt mode - target optimal pattern (checkerboard)
   const available: [number, number][] = []
   for (let r = 0; r < BOARD_SIZE; r++) {
     for (let c = 0; c < BOARD_SIZE; c++) {
-      if (board[r][c] === 'empty' || board[r][c] === 'ship') {
-        available.push([r, c])
+      if (board[r][c] !== 'hit' && board[r][c] !== 'miss' && board[r][c] !== 'sunk') {
+        // Prefer checkerboard pattern for initial hunting
+        if ((r + c) % 2 === 0) {
+          available.unshift([r, c]) // Prioritize checkerboard squares
+        } else {
+          available.push([r, c])
+        }
       }
     }
   }
@@ -323,6 +364,8 @@ function ShipList({
 // ─── Main App ───────────────────────────────────────────────────────────────
 
 function App() {
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
   const [phase, setPhase] = useState<Phase>('placement')
   const [playerBoard, setPlayerBoard] = useState<CellState[][]>(createEmptyBoard)
   const [playerShips, setPlayerShips] = useState<PlacedShip[]>([])
@@ -338,6 +381,15 @@ function App() {
   const [message, setMessage] = useState('Place your ships!')
   const [winner, setWinner] = useState<'player' | 'computer' | null>(null)
   const [playerTurn, setPlayerTurn] = useState(true)
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
 
   // ── Placement Phase ──
 
@@ -388,9 +440,15 @@ function App() {
   if (phase === 'placement' && currentShip && hoverCell) {
     const [hr, hc] = hoverCell
     const cells = getShipCells(hr, hc, currentShip.size, orientation)
+    
+    // Filter cells to only show those within board bounds
+    const validCells = cells.filter(([r, c]) => 
+      r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE
+    )
+    
     const valid = canPlaceShip(playerBoard, hr, hc, currentShip.size, orientation)
-    previewCells = new Set(cells.map(([r, c]) => `${r},${c}`))
-    invalidPreview = !valid
+    previewCells = new Set(validCells.map(([r, c]) => `${r},${c}`))
+    invalidPreview = !valid || validCells.length < currentShip.size
   }
 
   // ── Battle Phase ──
@@ -448,58 +506,57 @@ function App() {
       setPlayerTurn(false)
 
       // Computer's turn after a short delay
-      setTimeout(() => {
-        let newPlayerBoard = playerBoard.map((r) => [...r])
-        const newPlayerShips = playerShips.map((s) => ({ ...s }))
-        const newComputerHits = [...computerHits]
+      timeoutRef.current = setTimeout(() => {
+        setPlayerBoard(currentBoard => {
+          const newPlayerBoard = currentBoard.map((r) => [...r])
+          const [cr, cc] = computerMove(newPlayerBoard, computerHits)
 
-        const [cr, cc] = computerMove(newPlayerBoard, newComputerHits)
+          if (newPlayerBoard[cr][cc] === 'ship') {
+            newPlayerBoard[cr][cc] = 'hit'
+            const newComputerHits: [number, number][] = [...computerHits, [cr, cc]]
 
-        if (newPlayerBoard[cr][cc] === 'ship') {
-          newPlayerBoard[cr][cc] = 'hit'
-          newComputerHits.push([cr, cc])
-
-          let sunkMsg = ''
-          for (const ship of newPlayerShips) {
-            if (!ship.sunk && checkShipSunk(ship, newPlayerBoard)) {
-              ship.sunk = true
-              newPlayerBoard = markShipSunk(newPlayerBoard, ship)
-              // Remove sunk ship's cells from targeting
-              const sunkCells = new Set(ship.cells.map(([r, c]) => `${r},${c}`))
-              const filtered = newComputerHits.filter(
-                ([r, c]) => !sunkCells.has(`${r},${c}`)
-              )
-              newComputerHits.length = 0
-              newComputerHits.push(...filtered)
-              sunkMsg = ` Computer sunk your ${ship.name}!`
+            let sunkMsg = ''
+            const newPlayerShips = playerShips.map((s) => ({ ...s }))
+            for (const ship of newPlayerShips) {
+              if (!ship.sunk && checkShipSunk(ship, newPlayerBoard)) {
+                ship.sunk = true
+                const updatedBoard = markShipSunk(newPlayerBoard, ship)
+                newPlayerBoard.splice(0, newPlayerBoard.length, ...updatedBoard)
+                // Remove sunk ship's cells from targeting
+                const sunkCells = new Set(ship.cells.map(([r, c]) => `${r},${c}`))
+                const filtered = newComputerHits.filter(
+                  ([r, c]) => !sunkCells.has(`${r},${c}`)
+                )
+                newComputerHits.length = 0
+                newComputerHits.push(...filtered)
+                sunkMsg = ` Computer sunk your ${ship.name}!`
+              }
             }
-          }
 
-          setMessage(
-            `Computer hit ${ROW_LABELS[cr]}${COL_LABELS[cc]}!${sunkMsg} Your turn.`
-          )
-
-          // Check computer win
-          if (newPlayerShips.every((s) => s.sunk)) {
-            setPhase('gameover')
-            setWinner('computer')
-            setMessage('Game over! The computer destroyed all your ships.')
-            setPlayerBoard(newPlayerBoard)
             setPlayerShips(newPlayerShips)
             setComputerHits(newComputerHits)
-            return
-          }
-        } else {
-          newPlayerBoard[cr][cc] = 'miss'
-          setMessage(
-            `Computer missed ${ROW_LABELS[cr]}${COL_LABELS[cc]}. Your turn!`
-          )
-        }
+            setMessage(
+              `Computer hit ${ROW_LABELS[cr]}${COL_LABELS[cc]}!${sunkMsg} Your turn.`
+            )
 
-        setPlayerBoard(newPlayerBoard)
-        setPlayerShips(newPlayerShips)
-        setComputerHits(newComputerHits)
-        setPlayerTurn(true)
+            // Check computer win
+            if (newPlayerShips.every((s) => s.sunk)) {
+              setPhase('gameover')
+              setWinner('computer')
+              setMessage('Game over! The computer destroyed all your ships.')
+            }
+
+            setPlayerTurn(true)
+            return newPlayerBoard
+          } else {
+            newPlayerBoard[cr][cc] = 'miss'
+            setMessage(
+              `Computer missed ${ROW_LABELS[cr]}${COL_LABELS[cc]}. Your turn!`
+            )
+            setPlayerTurn(true)
+            return newPlayerBoard
+          }
+        })
       }, 800)
     },
     [
@@ -508,7 +565,6 @@ function App() {
       enemyBoard,
       enemyDisplayBoard,
       enemyShips,
-      playerBoard,
       playerShips,
       computerHits,
     ]
@@ -517,6 +573,10 @@ function App() {
   // ── Reset ──
 
   const handleReset = () => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
     setPhase('placement')
     setPlayerBoard(createEmptyBoard())
     setPlayerShips([])
