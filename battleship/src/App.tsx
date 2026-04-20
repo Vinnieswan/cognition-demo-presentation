@@ -225,21 +225,25 @@ function computerMove(
     }
   }
 
-  // Random hunt mode - target optimal pattern (checkerboard)
-  const available: [number, number][] = []
+  // Random hunt mode - prefer checkerboard squares since the smallest ship
+  // spans 2 cells, so a checkerboard sweep is guaranteed to touch every ship
+  // with half as many shots. Draw uniformly from the checkerboard pool first,
+  // only falling back to the off-parity pool once it's exhausted.
+  const checkerboard: [number, number][] = []
+  const offParity: [number, number][] = []
   for (let r = 0; r < BOARD_SIZE; r++) {
     for (let c = 0; c < BOARD_SIZE; c++) {
       if (board[r][c] !== 'hit' && board[r][c] !== 'miss' && board[r][c] !== 'sunk') {
-        // Prefer checkerboard pattern for initial hunting
         if ((r + c) % 2 === 0) {
-          available.unshift([r, c]) // Prioritize checkerboard squares
+          checkerboard.push([r, c])
         } else {
-          available.push([r, c])
+          offParity.push([r, c])
         }
       }
     }
   }
-  const target = available[Math.floor(Math.random() * available.length)]
+  const pool = checkerboard.length > 0 ? checkerboard : offParity
+  const target = pool[Math.floor(Math.random() * pool.length)]
   console.log(`AI hunting randomly: ${ROW_LABELS[target[0]]}${COL_LABELS[target[1]]}`)
   return target
 }
