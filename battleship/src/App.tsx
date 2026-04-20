@@ -340,8 +340,12 @@ function Cell({
     bgClass = 'bg-red-600'
     content = <Crosshair className="w-4 h-4 text-white" />
   } else if (state === 'sunk') {
-    bgClass = 'bg-red-800'
-    content = <Crosshair className="w-4 h-4 text-red-300" />
+    bgClass = 'bg-red-900'
+    content = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-4 h-4 text-red-400">
+        <path d="M6 6l12 12M6 18L18 6" />
+      </svg>
+    )
   } else if (state === 'miss') {
     bgClass = 'bg-sky-900/50'
     content = <div className="w-2 h-2 rounded-full bg-slate-400" />
@@ -498,8 +502,11 @@ function App() {
     (row: number, col: number) => {
       if (phase !== 'placement' || !currentShip) return
 
-      if (!canPlaceShip(playerBoard, row, col, currentShip.size, orientation))
+      if (!canPlaceShip(playerBoard, row, col, currentShip.size, orientation)) {
+        setMessage("Can't place ship here! Ships can't overlap or go out of bounds.")
+        setTimeout(() => setMessage(`Place your ${currentShip.name} (${currentShip.size} cells)`), 2000)
         return
+      }
 
       const cells = getShipCells(row, col, currentShip.size, orientation)
       const newBoard = placeShipOnBoard(playerBoard, cells)
@@ -533,6 +540,56 @@ function App() {
     [phase]
   )
 
+  const handleRandomPlacement = useCallback(() => {
+    if (phase !== 'placement') return
+
+    let newBoard = playerBoard.map(row => [...row])
+    let newShips = [...playerShips]
+    
+    // Place all remaining ships randomly
+    for (let i = currentShipIndex; i < SHIPS.length; i++) {
+      const shipDef = SHIPS[i]
+      let placed = false
+      let attempts = 0
+      
+      while (!placed && attempts < 1000) {
+        attempts++
+        const orientation: Orientation = Math.random() < 0.5 ? 'horizontal' : 'vertical'
+        const row = Math.floor(Math.random() * BOARD_SIZE)
+        const col = Math.floor(Math.random() * BOARD_SIZE)
+        
+        if (canPlaceShip(newBoard, row, col, shipDef.size, orientation)) {
+          const cells = getShipCells(row, col, shipDef.size, orientation)
+          
+          // Place ship on board
+          for (const [r, c] of cells) {
+            newBoard[r][c] = 'ship'
+          }
+          
+          // Add ship to ships array
+          newShips.push({ ...shipDef, cells, sunk: false })
+          placed = true
+        }
+      }
+      
+      if (!placed) {
+        console.error(`Failed to place ${shipDef.name} after 1000 attempts`)
+        return
+      }
+    }
+    
+    setPlayerBoard(newBoard)
+    setPlayerShips(newShips)
+    
+    // Start battle phase
+    const enemy = randomlyPlaceShips()
+    setEnemyBoard(enemy.board)
+    setEnemyShips(enemy.ships)
+    setEnemyDisplayBoard(createEmptyBoard())
+    setPhase('battle')
+    setMessage('Your turn! Click on the enemy board to fire.')
+  }, [phase, playerBoard, playerShips, currentShipIndex])
+
   // Preview cells for placement
   let previewCells: Set<string> | undefined
   let invalidPreview = false
@@ -559,8 +616,11 @@ function App() {
         enemyDisplayBoard[row][col] === 'hit' ||
         enemyDisplayBoard[row][col] === 'miss' ||
         enemyDisplayBoard[row][col] === 'sunk'
-      )
+      ) {
+        setMessage("You've already fired at this location!")
+        setTimeout(() => setMessage("Your turn! Click on the enemy board to fire."), 1500)
         return
+      }
 
       let newEnemyBoard = enemyBoard.map((r) => [...r])
       let newDisplayBoard = enemyDisplayBoard.map((r) => [...r])
@@ -749,6 +809,13 @@ function App() {
           >
             <RotateCw className="w-4 h-4" />
             {orientation === 'horizontal' ? 'Horizontal' : 'Vertical'}
+          </button>
+          <button
+            onClick={handleRandomPlacement}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600/40 hover:bg-purple-500/50 rounded-lg border border-purple-600/40 text-sm text-purple-200 transition-colors"
+          >
+            <Anchor className="w-4 h-4" />
+            Random Placement
           </button>
           <div className="flex items-center gap-1 text-xs text-sky-400/70">
             <ChevronRight className="w-3 h-3" />
