@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { RotateCcw, Anchor, Crosshair, Ship, ChevronRight, RotateCw } from 'lucide-react'
+import { RotateCcw, Anchor, Crosshair, Ship, ChevronRight, RotateCw, Shuffle } from 'lucide-react'
 import './App.css'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -282,6 +282,7 @@ function Cell({
   state,
   isPlayerBoard,
   onClick,
+  onHover,
   isPreview,
   isInvalid,
                   shipType,
@@ -289,6 +290,7 @@ function Cell({
   state: CellState
   isPlayerBoard: boolean
   onClick?: () => void
+  onHover?: () => void
   isPreview?: boolean
   isInvalid?: boolean
   shipType?: string
@@ -357,6 +359,8 @@ function Cell({
     <button
       className={`w-9 h-9 border border-sky-800/60 flex items-center justify-center transition-all duration-150 ${bgClass} ${hoverClass}`}
       onClick={onClick}
+      onMouseEnter={onHover}
+      onFocus={onHover}
       disabled={!onClick}
     >
       {content}
@@ -369,6 +373,7 @@ function Board({
   board,
   isPlayerBoard,
   onCellClick,
+  onCellHover,
   previewCells,
   invalidPreview,
   label,
@@ -376,6 +381,7 @@ function Board({
   board: CellState[][]
   isPlayerBoard: boolean
   onCellClick?: (row: number, col: number) => void
+  onCellHover?: (row: number, col: number) => void
   previewCells?: Set<string>
   invalidPreview?: boolean
   label: string
@@ -424,6 +430,7 @@ function Board({
                   state={cell}
                   isPlayerBoard={isPlayerBoard}
                   onClick={canClick ? () => onCellClick(ri, ci) : undefined}
+                  onHover={onCellHover ? () => onCellHover(ri, ci) : undefined}
                   isPreview={isPreview}
                   isInvalid={invalidPreview}
                   shipType={ships ? getShipTypeForCell(ri, ci, ships) : undefined}                />
@@ -468,6 +475,7 @@ function ShipList({
 
 function App() {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const messageTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const [phase, setPhase] = useState<Phase>('placement')
   const [playerBoard, setPlayerBoard] = useState<CellState[][]>(createEmptyBoard)
@@ -475,6 +483,7 @@ function App() {
   const [currentShipIndex, setCurrentShipIndex] = useState(0)
   const [orientation, setOrientation] = useState<Orientation>('horizontal')
   const [hoverCell, setHoverCell] = useState<[number, number] | null>(null)
+  const [transientError, setTransientError] = useState<string | null>(null)
 
   const [enemyBoard, setEnemyBoard] = useState<CellState[][]>(createEmptyBoard)
   const [enemyDisplayBoard, setEnemyDisplayBoard] = useState<CellState[][]>(createEmptyBoard)
@@ -508,7 +517,22 @@ function App() {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current)
       }
+      if (messageTimeoutRef.current) {
+        clearTimeout(messageTimeoutRef.current)
+      }
     }
+  }, [])
+
+  // Show a transient error that auto-clears after 2 seconds.
+  const showTransientError = useCallback((text: string) => {
+    if (messageTimeoutRef.current) {
+      clearTimeout(messageTimeoutRef.current)
+    }
+    setTransientError(text)
+    messageTimeoutRef.current = setTimeout(() => {
+      setTransientError(null)
+      messageTimeoutRef.current = null
+    }, 2000)
   }, [])
 
   // ── Placement Phase ──
@@ -519,8 +543,12 @@ function App() {
     (row: number, col: number) => {
       if (phase !== 'placement' || !currentShip) return
 
-      if (!canPlaceShip(playerBoard, row, col, currentShip.size, orientation))
+      if (!canPlaceShip(playerBoard, row, col, currentShip.size, orientation)) {
+        showTransientError(
+          "Can't place ship here! Ships can't overlap or go out of bounds"
+        )
         return
+      }
 
       const cells = getShipCells(row, col, currentShip.size, orientation)
       const newBoard = placeShipOnBoard(playerBoard, cells)
@@ -543,8 +571,25 @@ function App() {
         setMessage(`Place your ${SHIPS[currentShipIndex + 1].name} (${SHIPS[currentShipIndex + 1].size} cells)`)
       }
     },
-    [phase, currentShip, playerBoard, orientation, playerShips, currentShipIndex]
+    [phase, currentShip, playerBoard, orientation, playerShips, currentShipIndex, showTransientError]
   )
+
+  // Random placement: auto-place all player ships and start the battle.
+  const handleRandomPlacement = useCallback(() => {
+    if (phase !== 'placement') return
+    const { board, ships } = randomlyPlaceShips()
+    setPlayerBoard(board)
+    setPlayerShips(ships)
+    setCurrentShipIndex(SHIPS.length)
+    setHoverCell(null)
+
+    const enemy = randomlyPlaceShips()
+    setEnemyBoard(enemy.board)
+    setEnemyShips(enemy.ships)
+    setEnemyDisplayBoard(createEmptyBoard())
+    setPhase('battle')
+    setMessage('Your turn! Click on the enemy board to fire.')
+  }, [phase])
 
   const handlePlacementHover = useCallback(
     (row: number, col: number) => {
@@ -580,8 +625,10 @@ function App() {
         enemyDisplayBoard[row][col] === 'hit' ||
         enemyDisplayBoard[row][col] === 'miss' ||
         enemyDisplayBoard[row][col] === 'sunk'
-      )
+      ) {
+        showTransientError("You've already fired at this location!")
         return
+      }
 
       let newEnemyBoard = enemyBoard.map((r) => [...r])
       let newDisplayBoard = enemyDisplayBoard.map((r) => [...r])
@@ -693,6 +740,7 @@ function App() {
       enemyBoard,
       enemyDisplayBoard,
       enemyShips,
+      showTransientError,
     ]
   )
 
@@ -702,6 +750,10 @@ function App() {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
       timeoutRef.current = null
+    }
+    if (messageTimeoutRef.current) {
+      clearTimeout(messageTimeoutRef.current)
+      messageTimeoutRef.current = null
     }
     setPhase('placement')
     setPlayerBoard(createEmptyBoard())
@@ -714,6 +766,7 @@ function App() {
     setEnemyShips([])
     setComputerHits([])
     setMessage('Place your ships!')
+    setTransientError(null)
     setWinner(null)
     setPlayerTurn(true)
   }
@@ -734,7 +787,7 @@ function App() {
       </header>
 
       {/* Message Bar */}
-      <div className="flex justify-center py-4">
+      <div className="flex flex-col items-center py-4 gap-2">
         <div
           className={`px-6 py-3 rounded-lg text-sm font-medium max-w-xl text-center ${
             winner === 'player'
@@ -746,6 +799,15 @@ function App() {
         >
           {message}
         </div>
+        {transientError && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="px-6 py-2 rounded-lg text-sm font-medium max-w-xl text-center bg-red-600/30 text-red-200 border border-red-500/40"
+          >
+            {transientError}
+          </div>
+        )}
       </div>
 
       {/* Placement Controls */}
@@ -765,6 +827,13 @@ function App() {
           >
             <RotateCw className="w-4 h-4" />
             {orientation === 'horizontal' ? 'Horizontal' : 'Vertical'}
+          </button>
+          <button
+            onClick={handleRandomPlacement}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-700/40 hover:bg-emerald-600/50 rounded-lg border border-emerald-600/40 text-sm text-emerald-100 transition-colors"
+          >
+            <Shuffle className="w-4 h-4" />
+            Random Placement
           </button>
           <div className="flex items-center gap-1 text-xs text-sky-400/70">
             <ChevronRight className="w-3 h-3" />
@@ -786,6 +855,9 @@ function App() {
               label="Your Fleet"
               previewCells={previewCells}
               invalidPreview={invalidPreview}
+              onCellHover={
+                phase === 'placement' ? handlePlacementHover : undefined
+              }
               onCellClick={
                 phase === 'placement'
                   ? (r, c) => {
