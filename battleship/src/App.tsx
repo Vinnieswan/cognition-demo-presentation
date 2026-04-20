@@ -262,6 +262,16 @@ function markShipSunk(
   return newBoard
 }
 
+
+// Helper function to get ship type for a cell
+function getShipTypeForCell(row: number, col: number, ships: PlacedShip[]): string | undefined {
+  for (const ship of ships) {
+    if (ship.cells.some(([r, c]) => r === row && c === col)) {
+      return ship.name
+    }
+  }
+  return undefined
+}
 // ─── Components ─────────────────────────────────────────────────────────────
 
 function Cell({
@@ -270,12 +280,14 @@ function Cell({
   onClick,
   isPreview,
   isInvalid,
+                  shipType,
 }: {
   state: CellState
   isPlayerBoard: boolean
   onClick?: () => void
   isPreview?: boolean
   isInvalid?: boolean
+  shipType?: string
 }) {
   let bgClass = 'bg-sky-900/50'
   let content: React.ReactNode = null
@@ -287,6 +299,43 @@ function Cell({
     bgClass = 'bg-emerald-400/50'
   } else if (state === 'ship' && isPlayerBoard) {
     bgClass = 'bg-slate-500'
+    content = (
+      <div className="w-4 h-4 flex items-center justify-center">
+        {shipType === 'Carrier' && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <path d="M2 12h20v2H2v-2zm0-4h20v2H2V8zm0 8h20v2H2v-2zm0-12h20v2H2V4z"/>
+          </svg>
+        )}
+        {shipType === 'Battleship' && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <path d="M2 10h20v4H2v-4zm0-2h20v2H2V8zm0 6h20v2H2v-2z"/>
+          </svg>
+        )}
+        {shipType === 'Cruiser' && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <ellipse cx="12" cy="12" rx="10" ry="6"/>
+            <rect x="10" y="8" width="4" height="8" fill="currentColor"/>
+          </svg>
+        )}
+        {shipType === 'Submarine' && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <ellipse cx="12" cy="12" rx="10" ry="4"/>
+            <rect x="10" y="8" width="4" height="8" fill="currentColor"/>
+            <path d="M12 8v-4M8 6l4-2 4 2" stroke="currentColor" strokeWidth="1" fill="none"/>
+          </svg>
+        )}
+        {shipType === 'Destroyer' && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <rect x="4" y="10" width="16" height="4" rx="2"/>
+          </svg>
+        )}
+        {!shipType && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <path d="M2 12h20v2H2v-2z"/>
+          </svg>
+        )}
+      </div>
+    )
   } else if (state === 'hit') {
     bgClass = 'bg-red-600'
     content = <Crosshair className="w-4 h-4 text-white" />
@@ -312,6 +361,7 @@ function Cell({
 }
 
 function Board({
+  ships,
   board,
   isPlayerBoard,
   onCellClick,
@@ -325,6 +375,7 @@ function Board({
   previewCells?: Set<string>
   invalidPreview?: boolean
   label: string
+  ships?: PlacedShip[]
 }) {
   return (
     <div className="flex flex-col items-center">
@@ -371,7 +422,7 @@ function Board({
                   onClick={canClick ? () => onCellClick(ri, ci) : undefined}
                   isPreview={isPreview}
                   isInvalid={invalidPreview}
-                />
+                  shipType={ships ? getShipTypeForCell(ri, ci, ships) : undefined}                />
               )
             })}
           </div>
@@ -715,7 +766,7 @@ function App() {
           <div>
             <Board
               board={playerBoard}
-              isPlayerBoard={true}
+              ships={playerShips}              isPlayerBoard={true}
               label="Your Fleet"
               previewCells={previewCells}
               invalidPreview={invalidPreview}
@@ -737,7 +788,7 @@ function App() {
           <div>
             <Board
               board={enemyDisplayBoard}
-              isPlayerBoard={false}
+              ships={enemyShips}              isPlayerBoard={false}
               onCellClick={phase === 'battle' && playerTurn ? handleAttack : undefined}
               label="Enemy Waters"
             />
