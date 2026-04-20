@@ -122,7 +122,7 @@ function randomlyPlaceShips(): {
     const key = `${r},${c}`
     cellCounts.set(key, (cellCounts.get(key) || 0) + 1)
   }
-  const overlaps = Array.from(cellCounts.entries()).filter(([_, count]) => count > 1)
+  const overlaps = Array.from(cellCounts.entries()).filter(([, count]) => count > 1)
   if (overlaps.length > 0) {
     console.error('Ship overlaps detected:', overlaps)
   }
@@ -464,7 +464,7 @@ function ShipList({
 
 function App() {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
-  
+
   const [phase, setPhase] = useState<Phase>('placement')
   const [playerBoard, setPlayerBoard] = useState<CellState[][]>(createEmptyBoard)
   const [playerShips, setPlayerShips] = useState<PlacedShip[]>([])
@@ -480,6 +480,23 @@ function App() {
   const [message, setMessage] = useState('Place your ships!')
   const [winner, setWinner] = useState<'player' | 'computer' | null>(null)
   const [playerTurn, setPlayerTurn] = useState(true)
+
+  // Refs track the latest committed values so the deferred computer-turn
+  // timeout can read current state without reintroducing stale-closure bugs
+  // or relying on nested setState updater mutations.
+  const playerBoardRef = useRef(playerBoard)
+  const playerShipsRef = useRef(playerShips)
+  const computerHitsRef = useRef(computerHits)
+
+  useEffect(() => {
+    playerBoardRef.current = playerBoard
+  }, [playerBoard])
+  useEffect(() => {
+    playerShipsRef.current = playerShips
+  }, [playerShips])
+  useEffect(() => {
+    computerHitsRef.current = computerHits
+  }, [computerHits])
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -604,69 +621,66 @@ function App() {
       setEnemyShips(newEnemyShips)
       setPlayerTurn(false)
 
-      // Computer's turn after a short delay
+      // Computer's turn after a short delay.
+      // All state is derived synchronously from refs so we can call each
+      // setter exactly once with the final committed value. This avoids
+      // (a) stale closures over state captured when handleAttack was defined,
+      // (b) nested setState updaters that mutate already-committed state,
+      // and (c) `setMessage` running before a deferred `setPlayerShips`
+      // updater has produced the "sunk" flag.
       timeoutRef.current = setTimeout(() => {
-        setPlayerBoard(currentBoard => {
-          const newPlayerBoard = currentBoard.map((r) => [...r])
-          
-          setComputerHits(currentHits => {
-            const [cr, cc] = computerMove(newPlayerBoard, currentHits)
-            console.log(`Computer targeting ${ROW_LABELS[cr]}${COL_LABELS[cc]}, current hits:`, currentHits.map(([r, c]) => `${ROW_LABELS[r]}${COL_LABELS[c]}`))
+        timeoutRef.current = null
 
-            if (newPlayerBoard[cr][cc] === 'ship') {
-              newPlayerBoard[cr][cc] = 'hit'
-              const newComputerHits: [number, number][] = [...currentHits, [cr, cc]]
+        let nextPlayerBoard = playerBoardRef.current.map((r) => [...r])
+        const nextPlayerShips = playerShipsRef.current.map((s) => ({ ...s }))
+        let nextComputerHits: [number, number][] = [...computerHitsRef.current]
 
-              let sunkMsg = ''
-              setPlayerShips(currentShips => {
-                const newPlayerShips = currentShips.map((s) => ({ ...s }))
-                for (const ship of newPlayerShips) {
-                  if (!ship.sunk && checkShipSunk(ship, newPlayerBoard)) {
-                    ship.sunk = true
-                    const updatedBoard = markShipSunk(newPlayerBoard, ship)
-                    newPlayerBoard.splice(0, newPlayerBoard.length, ...updatedBoard)
-                    // Remove sunk ship's cells from targeting
-                    const sunkCells = new Set(ship.cells.map(([r, c]) => `${r},${c}`))
-                    const filtered = newComputerHits.filter(
-                      ([r, c]) => !sunkCells.has(`${r},${c}`)
-                    )
-                    newComputerHits.length = 0
-                    newComputerHits.push(...filtered)
-                    sunkMsg = ` Computer sunk your ${ship.name}!`
-                    console.log(`Ship sunk: ${ship.name}, remaining hits:`, newComputerHits.map(([r, c]) => `${ROW_LABELS[r]}${COL_LABELS[c]}`))
-                  }
-                }
-                return newPlayerShips
-              })
+        const [cr, cc] = computerMove(nextPlayerBoard, nextComputerHits)
 
-              setMessage(
-                `Computer hit ${ROW_LABELS[cr]}${COL_LABELS[cc]}!${sunkMsg} Your turn.`
+        if (nextPlayerBoard[cr][cc] === 'ship') {
+          nextPlayerBoard[cr][cc] = 'hit'
+          nextComputerHits.push([cr, cc])
+
+          let sunkMsg = ''
+          for (const ship of nextPlayerShips) {
+            if (!ship.sunk && checkShipSunk(ship, nextPlayerBoard)) {
+              ship.sunk = true
+              nextPlayerBoard = markShipSunk(nextPlayerBoard, ship)
+              // Drop the sunk ship's cells from the AI's active target list
+              // so the hunt/target heuristics don't keep probing around it.
+              const sunkCells = new Set(
+                ship.cells.map(([r, c]) => `${r},${c}`)
               )
-
-              // Check computer win
-              setPlayerShips(currentShips => {
-                if (currentShips.every((s) => s.sunk)) {
-                  setPhase('gameover')
-                  setWinner('computer')
-                  setMessage('Game over! The computer destroyed all your ships.')
-                }
-                return currentShips
-              })
-
-              setPlayerTurn(true)
-              return newComputerHits
-            } else {
-              newPlayerBoard[cr][cc] = 'miss'
-              setMessage(
-                `Computer missed ${ROW_LABELS[cr]}${COL_LABELS[cc]}. Your turn!`
+              nextComputerHits = nextComputerHits.filter(
+                ([r, c]) => !sunkCells.has(`${r},${c}`)
               )
-              setPlayerTurn(true)
-              return currentHits
+              sunkMsg = ` Computer sunk your ${ship.name}!`
             }
-          })
-          
-          return newPlayerBoard
-        })
+          }
+
+          setPlayerBoard(nextPlayerBoard)
+          setPlayerShips(nextPlayerShips)
+          setComputerHits(nextComputerHits)
+
+          if (nextPlayerShips.every((s) => s.sunk)) {
+            setPhase('gameover')
+            setWinner('computer')
+            setMessage('Game over! The computer destroyed all your ships.')
+            return
+          }
+
+          setMessage(
+            `Computer hit ${ROW_LABELS[cr]}${COL_LABELS[cc]}!${sunkMsg} Your turn.`
+          )
+        } else {
+          nextPlayerBoard[cr][cc] = 'miss'
+          setPlayerBoard(nextPlayerBoard)
+          setMessage(
+            `Computer missed ${ROW_LABELS[cr]}${COL_LABELS[cc]}. Your turn!`
+          )
+        }
+
+        setPlayerTurn(true)
       }, 800)
     },
     [
@@ -675,8 +689,6 @@ function App() {
       enemyBoard,
       enemyDisplayBoard,
       enemyShips,
-      playerShips,
-      computerHits,
     ]
   )
 
