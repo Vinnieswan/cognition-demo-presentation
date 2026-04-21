@@ -28,30 +28,30 @@ A classic Battleship game built with React, TypeScript, and Tailwind CSS. Place 
                
                 - ## Tech stack
                
-                - - [React 18](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
-                  - - [Vite 6](https://vitejs.dev/) for dev server and bundling
-                    - - [Tailwind CSS](https://tailwindcss.com/) with `tailwindcss-animate`
-                      - - [shadcn/ui](https://ui.shadcn.com/) primitives (`class-variance-authority`, `clsx`, `tailwind-merge`)
-                        - - [Lucide](https://lucide.dev/) icons
-                          - - [Recharts](https://recharts.org/) for the stats panel
-                            - - ESLint 9 + `typescript-eslint`
+   - - [React 18](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
+     - - [Vite 6](https://vitejs.dev/) for dev server and bundling
+     - - [Tailwind CSS](https://tailwindcss.com/) with `tailwindcss-animate`
+        - - [shadcn/ui](https://ui.shadcn.com/) primitives (`class-variance-authority`, `clsx`, `tailwind-merge`)
+             - - [Lucide](https://lucide.dev/) icons
+                 - - [Recharts](https://recharts.org/) for the stats panel
+                   - - ESLint 9 + `typescript-eslint`
                              
-                              - ## Getting started
+                   - ## Getting started
                              
-                              - Requirements: **Node.js 18+** and npm.
+                     - Requirements: **Node.js 18+** and npm.
                              
-                              - ```bash
-                                # from the repo root
-                                cd battleship
+                       - ```bash
+                         # from the repo root
+                         cd battleship
 
-                                # install dependencies
-                                npm install
+                         # install dependencies
+                         npm install
 
-                                # start the dev server (http://localhost:5173)
-                                npm run dev
+                         # start the dev server (http://localhost:5173)
+                         npm run dev
                                 ```
 
-                                ### Available scripts
+                           ### Available scripts
 
                                 | Script            | What it does                                  |
                                 | ----------------- | --------------------------------------------- |
