@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react'
-import { RotateCcw, Anchor, Crosshair, Ship, ChevronRight, RotateCw } from 'lucide-react'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import { RotateCcw, Anchor, Crosshair, Ship, ChevronRight, RotateCw, Shuffle } from 'lucide-react'
 import './App.css'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ function canPlaceShip(
   for (let i = 0; i < size; i++) {
     const r = orientation === 'vertical' ? row + i : row
     const c = orientation === 'horizontal' ? col + i : col
-    if (r >= BOARD_SIZE || c >= BOARD_SIZE) return false
+    if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) return false
     if (board[r][c] !== 'empty') return false
   }
   return true
@@ -93,7 +93,9 @@ function randomlyPlaceShips(): {
 
   for (const shipDef of SHIPS) {
     let placed = false
-    while (!placed) {
+    let attempts = 0
+    while (!placed && attempts < 1000) {
+      attempts++
       const orientation: Orientation =
         Math.random() < 0.5 ? 'horizontal' : 'vertical'
       const row = Math.floor(Math.random() * BOARD_SIZE)
@@ -108,51 +110,142 @@ function randomlyPlaceShips(): {
         placed = true
       }
     }
+    if (!placed) {
+      console.error(`Failed to place ${shipDef.name} after 1000 attempts`)
+    }
+  }
+
+  // Debug: Check for overlaps
+  const allCells = ships.flatMap(ship => ship.cells)
+  const cellCounts = new Map<string, number>()
+  for (const [r, c] of allCells) {
+    const key = `${r},${c}`
+    cellCounts.set(key, (cellCounts.get(key) || 0) + 1)
+  }
+  const overlaps = Array.from(cellCounts.entries()).filter(([, count]) => count > 1)
+  if (overlaps.length > 0) {
+    console.error('Ship overlaps detected:', overlaps)
   }
 
   return { board, ships }
 }
 
-// Computer AI: hunt/target mode
+// Computer AI: aggressive hunt/target mode
 function computerMove(
   board: CellState[][],
   lastHits: [number, number][]
 ): [number, number] {
-  // If we have recent hits that haven't sunk a ship, target adjacent cells
+  // If we have hits, prioritize targeting adjacent cells to the most recent hit
   if (lastHits.length > 0) {
+    // Get the most recent hit (last in array)
+    const mostRecentHit = lastHits[lastHits.length - 1]
+    const [recentR, recentC] = mostRecentHit
+    
+    // First, try adjacent cells to the most recent hit (most aggressive)
     const directions: [number, number][] = [
-      [-1, 0],
-      [1, 0],
-      [0, -1],
-      [0, 1],
+      [-1, 0], [1, 0], [0, -1], [0, 1] // up, down, left, right
     ]
-    for (const [hr, hc] of lastHits) {
-      for (const [dr, dc] of directions) {
-        const nr = hr + dr
-        const nc = hc + dc
-        if (
-          nr >= 0 &&
-          nr < BOARD_SIZE &&
-          nc >= 0 &&
-          nc < BOARD_SIZE &&
-          (board[nr][nc] === 'empty' || board[nr][nc] === 'ship')
-        ) {
-          return [nr, nc]
+    
+    // Shuffle directions for some randomness but prioritize
+    const shuffledDirections = directions.sort(() => Math.random() - 0.5)
+    
+    for (const [dr, dc] of shuffledDirections) {
+      const nr = recentR + dr
+      const nc = recentC + dc
+      if (
+        nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE &&
+        board[nr][nc] !== 'hit' && board[nr][nc] !== 'miss' && board[nr][nc] !== 'sunk'
+      ) {
+        console.log(`AI targeting adjacent to recent hit: ${ROW_LABELS[nr]}${COL_LABELS[nc]}`)
+        return [nr, nc]
+      }
+    }
+    
+    // If no adjacent cells available, try to determine ship orientation
+    const hits = lastHits.map(([r, c]) => ({ r, c }))
+    
+    // Check if hits form a line (same row or same column)
+    const sameRow = hits.every(h => h.r === hits[0].r)
+    const sameCol = hits.every(h => h.c === hits[0].c)
+    
+    if (sameRow || sameCol) {
+      // We've determined orientation, target along the line
+      const row = hits[0].r
+      const col = hits[0].c
+      
+      if (sameRow) {
+        // Target horizontally along the same row
+        const minCol = Math.min(...hits.map(h => h.c))
+        const maxCol = Math.max(...hits.map(h => h.c))
+        
+        // Try to extend left
+        if (minCol > 0 && board[row][minCol - 1] !== 'hit' && board[row][minCol - 1] !== 'miss' && board[row][minCol - 1] !== 'sunk') {
+          console.log(`AI extending ship left: ${ROW_LABELS[row]}${COL_LABELS[minCol - 1]}`)
+          return [row, minCol - 1]
+        }
+        // Try to extend right
+        if (maxCol < BOARD_SIZE - 1 && board[row][maxCol + 1] !== 'hit' && board[row][maxCol + 1] !== 'miss' && board[row][maxCol + 1] !== 'sunk') {
+          console.log(`AI extending ship right: ${ROW_LABELS[row]}${COL_LABELS[maxCol + 1]}`)
+          return [row, maxCol + 1]
+        }
+      } else {
+        // Target vertically along the same column
+        const minRow = Math.min(...hits.map(h => h.r))
+        const maxRow = Math.max(...hits.map(h => h.r))
+        
+        // Try to extend up
+        if (minRow > 0 && board[minRow - 1][col] !== 'hit' && board[minRow - 1][col] !== 'miss' && board[minRow - 1][col] !== 'sunk') {
+          console.log(`AI extending ship up: ${ROW_LABELS[minRow - 1]}${COL_LABELS[col]}`)
+          return [minRow - 1, col]
+        }
+        // Try to extend down
+        if (maxRow < BOARD_SIZE - 1 && board[maxRow + 1][col] !== 'hit' && board[maxRow + 1][col] !== 'miss' && board[maxRow + 1][col] !== 'sunk') {
+          console.log(`AI extending ship down: ${ROW_LABELS[maxRow + 1]}${COL_LABELS[col]}`)
+          return [maxRow + 1, col]
+        }
+      }
+    } else {
+      // Hits are not aligned, target adjacent cells to any hit
+      for (const hit of hits) {
+        const directions: [number, number][] = [
+          [-1, 0], [1, 0], [0, -1], [0, 1]
+        ]
+        for (const [dr, dc] of directions) {
+          const nr = hit.r + dr
+          const nc = hit.c + dc
+          if (
+            nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE &&
+            board[nr][nc] !== 'hit' && board[nr][nc] !== 'miss' && board[nr][nc] !== 'sunk'
+          ) {
+            console.log(`AI targeting adjacent to hit: ${ROW_LABELS[nr]}${COL_LABELS[nc]}`)
+            return [nr, nc]
+          }
         }
       }
     }
   }
 
-  // Random hunt
-  const available: [number, number][] = []
+  // Random hunt mode - prefer checkerboard squares since the smallest ship
+  // spans 2 cells, so a checkerboard sweep is guaranteed to touch every ship
+  // with half as many shots. Draw uniformly from the checkerboard pool first,
+  // only falling back to the off-parity pool once it's exhausted.
+  const checkerboard: [number, number][] = []
+  const offParity: [number, number][] = []
   for (let r = 0; r < BOARD_SIZE; r++) {
     for (let c = 0; c < BOARD_SIZE; c++) {
-      if (board[r][c] === 'empty' || board[r][c] === 'ship') {
-        available.push([r, c])
+      if (board[r][c] !== 'hit' && board[r][c] !== 'miss' && board[r][c] !== 'sunk') {
+        if ((r + c) % 2 === 0) {
+          checkerboard.push([r, c])
+        } else {
+          offParity.push([r, c])
+        }
       }
     }
   }
-  return available[Math.floor(Math.random() * available.length)]
+  const pool = checkerboard.length > 0 ? checkerboard : offParity
+  const target = pool[Math.floor(Math.random() * pool.length)]
+  console.log(`AI hunting randomly: ${ROW_LABELS[target[0]]}${COL_LABELS[target[1]]}`)
+  return target
 }
 
 function checkShipSunk(
@@ -173,20 +266,34 @@ function markShipSunk(
   return newBoard
 }
 
+
+// Helper function to get ship type for a cell
+function getShipTypeForCell(row: number, col: number, ships: PlacedShip[]): string | undefined {
+  for (const ship of ships) {
+    if (ship.cells.some(([r, c]) => r === row && c === col)) {
+      return ship.name
+    }
+  }
+  return undefined
+}
 // ─── Components ─────────────────────────────────────────────────────────────
 
 function Cell({
   state,
   isPlayerBoard,
   onClick,
+  onHover,
   isPreview,
   isInvalid,
+                  shipType,
 }: {
   state: CellState
   isPlayerBoard: boolean
   onClick?: () => void
+  onHover?: () => void
   isPreview?: boolean
   isInvalid?: boolean
+  shipType?: string
 }) {
   let bgClass = 'bg-sky-900/50'
   let content: React.ReactNode = null
@@ -198,6 +305,43 @@ function Cell({
     bgClass = 'bg-emerald-400/50'
   } else if (state === 'ship' && isPlayerBoard) {
     bgClass = 'bg-slate-500'
+    content = (
+      <div className="w-4 h-4 flex items-center justify-center">
+        {shipType === 'Carrier' && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <path d="M2 12h20v2H2v-2zm0-4h20v2H2V8zm0 8h20v2H2v-2zm0-12h20v2H2V4z"/>
+          </svg>
+        )}
+        {shipType === 'Battleship' && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <path d="M2 10h20v4H2v-4zm0-2h20v2H2V8zm0 6h20v2H2v-2z"/>
+          </svg>
+        )}
+        {shipType === 'Cruiser' && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <ellipse cx="12" cy="12" rx="10" ry="6"/>
+            <rect x="10" y="8" width="4" height="8" fill="currentColor"/>
+          </svg>
+        )}
+        {shipType === 'Submarine' && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <ellipse cx="12" cy="12" rx="10" ry="4"/>
+            <rect x="10" y="8" width="4" height="8" fill="currentColor"/>
+            <path d="M12 8v-4M8 6l4-2 4 2" stroke="currentColor" strokeWidth="1" fill="none"/>
+          </svg>
+        )}
+        {shipType === 'Destroyer' && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <rect x="4" y="10" width="16" height="4" rx="2"/>
+          </svg>
+        )}
+        {!shipType && (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="text-slate-300 w-full h-full">
+            <path d="M2 12h20v2H2v-2z"/>
+          </svg>
+        )}
+      </div>
+    )
   } else if (state === 'hit') {
     bgClass = 'bg-red-600'
     content = <Crosshair className="w-4 h-4 text-white" />
@@ -215,6 +359,8 @@ function Cell({
     <button
       className={`w-9 h-9 border border-sky-800/60 flex items-center justify-center transition-all duration-150 ${bgClass} ${hoverClass}`}
       onClick={onClick}
+      onMouseEnter={onHover}
+      onFocus={onHover}
       disabled={!onClick}
     >
       {content}
@@ -223,9 +369,11 @@ function Cell({
 }
 
 function Board({
+  ships,
   board,
   isPlayerBoard,
   onCellClick,
+  onCellHover,
   previewCells,
   invalidPreview,
   label,
@@ -233,9 +381,11 @@ function Board({
   board: CellState[][]
   isPlayerBoard: boolean
   onCellClick?: (row: number, col: number) => void
+  onCellHover?: (row: number, col: number) => void
   previewCells?: Set<string>
   invalidPreview?: boolean
   label: string
+  ships?: PlacedShip[]
 }) {
   return (
     <div className="flex flex-col items-center">
@@ -280,9 +430,10 @@ function Board({
                   state={cell}
                   isPlayerBoard={isPlayerBoard}
                   onClick={canClick ? () => onCellClick(ri, ci) : undefined}
+                  onHover={onCellHover ? () => onCellHover(ri, ci) : undefined}
                   isPreview={isPreview}
                   isInvalid={invalidPreview}
-                />
+                  shipType={ships ? getShipTypeForCell(ri, ci, ships) : undefined}                />
               )
             })}
           </div>
@@ -323,12 +474,16 @@ function ShipList({
 // ─── Main App ───────────────────────────────────────────────────────────────
 
 function App() {
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const messageTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
   const [phase, setPhase] = useState<Phase>('placement')
   const [playerBoard, setPlayerBoard] = useState<CellState[][]>(createEmptyBoard)
   const [playerShips, setPlayerShips] = useState<PlacedShip[]>([])
   const [currentShipIndex, setCurrentShipIndex] = useState(0)
   const [orientation, setOrientation] = useState<Orientation>('horizontal')
   const [hoverCell, setHoverCell] = useState<[number, number] | null>(null)
+  const [transientError, setTransientError] = useState<string | null>(null)
 
   const [enemyBoard, setEnemyBoard] = useState<CellState[][]>(createEmptyBoard)
   const [enemyDisplayBoard, setEnemyDisplayBoard] = useState<CellState[][]>(createEmptyBoard)
@@ -339,6 +494,47 @@ function App() {
   const [winner, setWinner] = useState<'player' | 'computer' | null>(null)
   const [playerTurn, setPlayerTurn] = useState(true)
 
+  // Refs track the latest committed values so the deferred computer-turn
+  // timeout can read current state without reintroducing stale-closure bugs
+  // or relying on nested setState updater mutations.
+  const playerBoardRef = useRef(playerBoard)
+  const playerShipsRef = useRef(playerShips)
+  const computerHitsRef = useRef(computerHits)
+
+  useEffect(() => {
+    playerBoardRef.current = playerBoard
+  }, [playerBoard])
+  useEffect(() => {
+    playerShipsRef.current = playerShips
+  }, [playerShips])
+  useEffect(() => {
+    computerHitsRef.current = computerHits
+  }, [computerHits])
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+      if (messageTimeoutRef.current) {
+        clearTimeout(messageTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  // Show a transient error that auto-clears after 2 seconds.
+  const showTransientError = useCallback((text: string) => {
+    if (messageTimeoutRef.current) {
+      clearTimeout(messageTimeoutRef.current)
+    }
+    setTransientError(text)
+    messageTimeoutRef.current = setTimeout(() => {
+      setTransientError(null)
+      messageTimeoutRef.current = null
+    }, 2000)
+  }, [])
+
   // ── Placement Phase ──
 
   const currentShip = SHIPS[currentShipIndex] as ShipDef | undefined
@@ -347,8 +543,12 @@ function App() {
     (row: number, col: number) => {
       if (phase !== 'placement' || !currentShip) return
 
-      if (!canPlaceShip(playerBoard, row, col, currentShip.size, orientation))
+      if (!canPlaceShip(playerBoard, row, col, currentShip.size, orientation)) {
+        showTransientError(
+          "Can't place ship here! Ships can't overlap or go out of bounds"
+        )
         return
+      }
 
       const cells = getShipCells(row, col, currentShip.size, orientation)
       const newBoard = placeShipOnBoard(playerBoard, cells)
@@ -371,8 +571,25 @@ function App() {
         setMessage(`Place your ${SHIPS[currentShipIndex + 1].name} (${SHIPS[currentShipIndex + 1].size} cells)`)
       }
     },
-    [phase, currentShip, playerBoard, orientation, playerShips, currentShipIndex]
+    [phase, currentShip, playerBoard, orientation, playerShips, currentShipIndex, showTransientError]
   )
+
+  // Random placement: auto-place all player ships and start the battle.
+  const handleRandomPlacement = useCallback(() => {
+    if (phase !== 'placement') return
+    const { board, ships } = randomlyPlaceShips()
+    setPlayerBoard(board)
+    setPlayerShips(ships)
+    setCurrentShipIndex(SHIPS.length)
+    setHoverCell(null)
+
+    const enemy = randomlyPlaceShips()
+    setEnemyBoard(enemy.board)
+    setEnemyShips(enemy.ships)
+    setEnemyDisplayBoard(createEmptyBoard())
+    setPhase('battle')
+    setMessage('Your turn! Click on the enemy board to fire.')
+  }, [phase])
 
   const handlePlacementHover = useCallback(
     (row: number, col: number) => {
@@ -388,9 +605,15 @@ function App() {
   if (phase === 'placement' && currentShip && hoverCell) {
     const [hr, hc] = hoverCell
     const cells = getShipCells(hr, hc, currentShip.size, orientation)
+    
+    // Filter cells to only show those within board bounds
+    const validCells = cells.filter(([r, c]) => 
+      r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE
+    )
+    
     const valid = canPlaceShip(playerBoard, hr, hc, currentShip.size, orientation)
-    previewCells = new Set(cells.map(([r, c]) => `${r},${c}`))
-    invalidPreview = !valid
+    previewCells = new Set(validCells.map(([r, c]) => `${r},${c}`))
+    invalidPreview = !valid || validCells.length < currentShip.size
   }
 
   // ── Battle Phase ──
@@ -402,8 +625,10 @@ function App() {
         enemyDisplayBoard[row][col] === 'hit' ||
         enemyDisplayBoard[row][col] === 'miss' ||
         enemyDisplayBoard[row][col] === 'sunk'
-      )
+      ) {
+        showTransientError("You've already fired at this location!")
         return
+      }
 
       let newEnemyBoard = enemyBoard.map((r) => [...r])
       let newDisplayBoard = enemyDisplayBoard.map((r) => [...r])
@@ -447,58 +672,65 @@ function App() {
       setEnemyShips(newEnemyShips)
       setPlayerTurn(false)
 
-      // Computer's turn after a short delay
-      setTimeout(() => {
-        let newPlayerBoard = playerBoard.map((r) => [...r])
-        const newPlayerShips = playerShips.map((s) => ({ ...s }))
-        const newComputerHits = [...computerHits]
+      // Computer's turn after a short delay.
+      // All state is derived synchronously from refs so we can call each
+      // setter exactly once with the final committed value. This avoids
+      // (a) stale closures over state captured when handleAttack was defined,
+      // (b) nested setState updaters that mutate already-committed state,
+      // and (c) `setMessage` running before a deferred `setPlayerShips`
+      // updater has produced the "sunk" flag.
+      timeoutRef.current = setTimeout(() => {
+        timeoutRef.current = null
 
-        const [cr, cc] = computerMove(newPlayerBoard, newComputerHits)
+        let nextPlayerBoard = playerBoardRef.current.map((r) => [...r])
+        const nextPlayerShips = playerShipsRef.current.map((s) => ({ ...s }))
+        let nextComputerHits: [number, number][] = [...computerHitsRef.current]
 
-        if (newPlayerBoard[cr][cc] === 'ship') {
-          newPlayerBoard[cr][cc] = 'hit'
-          newComputerHits.push([cr, cc])
+        const [cr, cc] = computerMove(nextPlayerBoard, nextComputerHits)
+
+        if (nextPlayerBoard[cr][cc] === 'ship') {
+          nextPlayerBoard[cr][cc] = 'hit'
+          nextComputerHits.push([cr, cc])
 
           let sunkMsg = ''
-          for (const ship of newPlayerShips) {
-            if (!ship.sunk && checkShipSunk(ship, newPlayerBoard)) {
+          for (const ship of nextPlayerShips) {
+            if (!ship.sunk && checkShipSunk(ship, nextPlayerBoard)) {
               ship.sunk = true
-              newPlayerBoard = markShipSunk(newPlayerBoard, ship)
-              // Remove sunk ship's cells from targeting
-              const sunkCells = new Set(ship.cells.map(([r, c]) => `${r},${c}`))
-              const filtered = newComputerHits.filter(
+              nextPlayerBoard = markShipSunk(nextPlayerBoard, ship)
+              // Drop the sunk ship's cells from the AI's active target list
+              // so the hunt/target heuristics don't keep probing around it.
+              const sunkCells = new Set(
+                ship.cells.map(([r, c]) => `${r},${c}`)
+              )
+              nextComputerHits = nextComputerHits.filter(
                 ([r, c]) => !sunkCells.has(`${r},${c}`)
               )
-              newComputerHits.length = 0
-              newComputerHits.push(...filtered)
               sunkMsg = ` Computer sunk your ${ship.name}!`
             }
+          }
+
+          setPlayerBoard(nextPlayerBoard)
+          setPlayerShips(nextPlayerShips)
+          setComputerHits(nextComputerHits)
+
+          if (nextPlayerShips.every((s) => s.sunk)) {
+            setPhase('gameover')
+            setWinner('computer')
+            setMessage('Game over! The computer destroyed all your ships.')
+            return
           }
 
           setMessage(
             `Computer hit ${ROW_LABELS[cr]}${COL_LABELS[cc]}!${sunkMsg} Your turn.`
           )
-
-          // Check computer win
-          if (newPlayerShips.every((s) => s.sunk)) {
-            setPhase('gameover')
-            setWinner('computer')
-            setMessage('Game over! The computer destroyed all your ships.')
-            setPlayerBoard(newPlayerBoard)
-            setPlayerShips(newPlayerShips)
-            setComputerHits(newComputerHits)
-            return
-          }
         } else {
-          newPlayerBoard[cr][cc] = 'miss'
+          nextPlayerBoard[cr][cc] = 'miss'
+          setPlayerBoard(nextPlayerBoard)
           setMessage(
             `Computer missed ${ROW_LABELS[cr]}${COL_LABELS[cc]}. Your turn!`
           )
         }
 
-        setPlayerBoard(newPlayerBoard)
-        setPlayerShips(newPlayerShips)
-        setComputerHits(newComputerHits)
         setPlayerTurn(true)
       }, 800)
     },
@@ -508,15 +740,21 @@ function App() {
       enemyBoard,
       enemyDisplayBoard,
       enemyShips,
-      playerBoard,
-      playerShips,
-      computerHits,
+      showTransientError,
     ]
   )
 
   // ── Reset ──
 
   const handleReset = () => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
+    if (messageTimeoutRef.current) {
+      clearTimeout(messageTimeoutRef.current)
+      messageTimeoutRef.current = null
+    }
     setPhase('placement')
     setPlayerBoard(createEmptyBoard())
     setPlayerShips([])
@@ -528,6 +766,7 @@ function App() {
     setEnemyShips([])
     setComputerHits([])
     setMessage('Place your ships!')
+    setTransientError(null)
     setWinner(null)
     setPlayerTurn(true)
   }
@@ -548,7 +787,7 @@ function App() {
       </header>
 
       {/* Message Bar */}
-      <div className="flex justify-center py-4">
+      <div className="flex flex-col items-center py-4 gap-2">
         <div
           className={`px-6 py-3 rounded-lg text-sm font-medium max-w-xl text-center ${
             winner === 'player'
@@ -560,6 +799,15 @@ function App() {
         >
           {message}
         </div>
+        {transientError && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="px-6 py-2 rounded-lg text-sm font-medium max-w-xl text-center bg-red-600/30 text-red-200 border border-red-500/40"
+          >
+            {transientError}
+          </div>
+        )}
       </div>
 
       {/* Placement Controls */}
@@ -580,6 +828,13 @@ function App() {
             <RotateCw className="w-4 h-4" />
             {orientation === 'horizontal' ? 'Horizontal' : 'Vertical'}
           </button>
+          <button
+            onClick={handleRandomPlacement}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-700/40 hover:bg-emerald-600/50 rounded-lg border border-emerald-600/40 text-sm text-emerald-100 transition-colors"
+          >
+            <Shuffle className="w-4 h-4" />
+            Random Placement
+          </button>
           <div className="flex items-center gap-1 text-xs text-sky-400/70">
             <ChevronRight className="w-3 h-3" />
             {SHIPS.length - currentShipIndex} ships remaining
@@ -596,10 +851,13 @@ function App() {
           <div>
             <Board
               board={playerBoard}
-              isPlayerBoard={true}
+              ships={playerShips}              isPlayerBoard={true}
               label="Your Fleet"
               previewCells={previewCells}
               invalidPreview={invalidPreview}
+              onCellHover={
+                phase === 'placement' ? handlePlacementHover : undefined
+              }
               onCellClick={
                 phase === 'placement'
                   ? (r, c) => {
@@ -618,7 +876,7 @@ function App() {
           <div>
             <Board
               board={enemyDisplayBoard}
-              isPlayerBoard={false}
+              ships={enemyShips}              isPlayerBoard={false}
               onCellClick={phase === 'battle' && playerTurn ? handleAttack : undefined}
               label="Enemy Waters"
             />
